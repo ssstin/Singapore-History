@@ -31,16 +31,17 @@ def query_huggingface_model(prompt, max_retries=2):
     api_token = st.secrets["HF_API_TOKEN"]
     
     # Using Microsoft's Phi-4 model
-    API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
-
-    # Or OpenAI's TinyLlama:
-    # API_URL = "https://api-inference.huggingface.co/models/TinyLlama/TinyLlama-1.1B-Chat-v1.0"
-
-    # Adjust the prompt formatting for the alternative model
+    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-4"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+    
+    # Format the prompt for Phi-4
     prompt_with_context = (
-        f"<s>[INST] You are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history.\n\n"
-        f"{prompt} [/INST]"
+        f"<|system|>\nYou are a helpful assistant specialized in Singapore history. "
+        f"Keep your answers factual, informative and focused on Singapore's history.\n"
+        f"<|user|>\n{prompt}\n<|assistant|>"
     )
     
     # Prepare the payload
@@ -101,8 +102,13 @@ def query_huggingface_model(prompt, max_retries=2):
                     return "The model is currently initializing. This may take a minute since Phi-4 is a large model. Please try again shortly."
             else:
                 # Other error status codes
+                if response.status_code == 403:
+                    print(f"API Error: {response.status_code}")
+                    print(f"Response details: {response.text}")
+                    return "Access denied (HTTP 403). Your API token may not have permission to use this model. Please check your Hugging Face account permissions."
+
                 return f"Sorry, I encountered an error (Status code: {response.status_code}). Please try again later."
-        
+            
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
                 time.sleep(10)
