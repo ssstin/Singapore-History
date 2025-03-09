@@ -20,26 +20,27 @@ def load_css(css_file):
 
 # Load CSS File
 try:
-    css = load_css("styles/main.css")
+    css = load_css("src/styles/main.css")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 except Exception as e:
     st.write(f"CSS file not found. Default styling will be used. Error: {e}")
 
 # Function to query the Hugging Face model
-def query_huggingface_model(prompt):
+def query_huggingface_model(prompt, max_retries=2):
     # Get API key from Streamlit secrets (set in Streamlit Cloud)
     api_token = st.secrets["HF_API_TOKEN"]
     
-    API_URL = "https://api-inference.huggingface.co/models/unsloth/Phi-3.5-mini-instruct"
+    # Using Microsoft's Phi-4 model
+    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-4"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    # Format the prompt for the model
+    # Format the prompt for Phi-4
     prompt_with_context = (
-        f"You are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history. "
+        f"<|system|>\nYou are a helpful assistant specialized in Singapore history. "
+        f"Keep your answers factual, informative and focused on Singapore's history.\n"
         f"<|user|>\n{prompt}\n<|assistant|>"
     )
     
@@ -54,45 +55,66 @@ def query_huggingface_model(prompt):
         }
     }
     
-    try:
-        # Make the API request
-        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
-        
-        # Check if the request was successful
-        if response.status_code == 200:
-            # Extract the assistant's response from the model output
-            response_json = response.json()
+    # Add retry logic
+    for attempt in range(max_retries):
+        try:
+            # Make the API request
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
             
-            # Debug the response structure if needed
-            # st.write("Debug - Full response:", response_json)
-            
-            if isinstance(response_json, list) and len(response_json) > 0:
-                full_response = response_json[0].get("generated_text", "")
-                
-                # Extract just the assistant's reply
-                if "<|assistant|>" in full_response:
-                    parts = full_response.split("<|assistant|>")
-                    if len(parts) > 1:
-                        assistant_reply = parts[1].strip()
-                        return assistant_reply
+            # Check if the request was successful
+            if response.status_code == 200:
+                try:
+                    # Process the response
+                    response_json = response.json()
+                    
+                    # Handle different response formats
+                    if isinstance(response_json, list) and len(response_json) > 0:
+                        # Format for older models
+                        generated_text = response_json[0].get("generated_text", "")
+                    elif isinstance(response_json, dict):
+                        # Format for some newer models
+                        generated_text = response_json.get("generated_text", "")
                     else:
-                        return "I couldn't process the response correctly. Please try asking in a different way."
+                        # Fallback
+                        generated_text = str(response_json)
+                    
+                    # Extract only the assistant's response
+                    if "<|assistant|>" in generated_text:
+                        assistant_response = generated_text.split("<|assistant|>")[1].strip()
+                        return assistant_response
+                    else:
+                        # If format not found, return everything after the prompt
+                        return generated_text.replace(prompt_with_context, "").strip()
+                        
+                except Exception as e:
+                    # Log the error and response for debugging
+                    print(f"Error parsing response: {e}")
+                    print(f"Response content: {response.text[:300]}...")
+                    return f"I encountered an error processing the response. Please try again."
+            
+            # If model is loading, wait and retry
+            elif response.status_code == 503:
+                if attempt < max_retries - 1:
+                    # Wait longer between retries for larger models
+                    time.sleep(15)
+                    continue
                 else:
-                    # If the marker isn't present, return the entire response
-                    return full_response.strip()
+                    return "The model is currently initializing. This may take a minute since Phi-4 is a large model. Please try again shortly."
             else:
-                return "Received an unexpected response format. Please try again."
-        else:
-            # Handle different error codes
-            if response.status_code == 503:
-                return "The model is currently busy or loading. Please try again in a moment."
-            else:
+                # Other error status codes
                 return f"Sorry, I encountered an error (Status code: {response.status_code}). Please try again later."
+        
+        except requests.exceptions.Timeout:
+            if attempt < max_retries - 1:
+                time.sleep(10)
+                continue
+            else:
+                return "The request timed out. Phi-4 is a large model and may take longer to respond. Please try again in a moment."
+        except Exception as e:
+            return f"An error occurred: {str(e)}. Please try again later."
     
-    except requests.exceptions.Timeout:
-        return "The request timed out. The model might be busy. Please try again in a moment."
-    except Exception as e:
-        return f"An error occurred: {str(e)}. Please try again later."
+    # If we've exhausted all retries
+    return "Unable to get a response after multiple attempts. Please try again later."
 
 # Setup sidebar
 with st.sidebar:
