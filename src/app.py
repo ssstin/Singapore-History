@@ -61,11 +61,27 @@ def query_huggingface_model(prompt):
         # Check if the request was successful
         if response.status_code == 200:
             # Extract the assistant's response from the model output
-            full_response = response.json()[0]["generated_text"]
+            response_json = response.json()
             
-            # Extract just the assistant's reply
-            assistant_reply = full_response.split("<|assistant|>")[1].strip()
-            return assistant_reply
+            # Debug the response structure if needed
+            # st.write("Debug - Full response:", response_json)
+            
+            if isinstance(response_json, list) and len(response_json) > 0:
+                full_response = response_json[0].get("generated_text", "")
+                
+                # Extract just the assistant's reply
+                if "<|assistant|>" in full_response:
+                    parts = full_response.split("<|assistant|>")
+                    if len(parts) > 1:
+                        assistant_reply = parts[1].strip()
+                        return assistant_reply
+                    else:
+                        return "I couldn't process the response correctly. Please try asking in a different way."
+                else:
+                    # If the marker isn't present, return the entire response
+                    return full_response.strip()
+            else:
+                return "Received an unexpected response format. Please try again."
         else:
             # Handle different error codes
             if response.status_code == 503:
