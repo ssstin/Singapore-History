@@ -25,19 +25,18 @@ try:
 except Exception as e:
     st.write(f"CSS file not found. Default styling will be used. Error: {e}")
 
-# Function to query the Hugging Face model
 def query_huggingface_model(prompt, max_retries=2):
-    # Get API key from Streamlit secrets (set in Streamlit Cloud)
+    # Get API key from Streamlit secrets
     api_token = st.secrets["HF_API_TOKEN"]
     
-    # Using Microsoft's Phi-4 model
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-4"
+    # Using Microsoft's Phi-3.5-mini-instruct model
+    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-3.5-mini-instruct"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    # Format the prompt for Phi-4
+    # Format the prompt for Phi-3.5-mini
     prompt_with_context = (
         f"<|system|>\nYou are a helpful assistant specialized in Singapore history. "
         f"Keep your answers factual, informative and focused on Singapore's history.\n"
@@ -60,6 +59,10 @@ def query_huggingface_model(prompt, max_retries=2):
         try:
             # Make the API request
             response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
+            
+            # Log response for debugging
+            print(f"Status code: {response.status_code}")
+            print(f"Response preview: {response.text[:300]}")
             
             # Check if the request was successful
             if response.status_code == 200:
@@ -99,7 +102,7 @@ def query_huggingface_model(prompt, max_retries=2):
                     time.sleep(15)
                     continue
                 else:
-                    return "The model is currently initializing. This may take a minute since Phi-4 is a large model. Please try again shortly."
+                    return "The model is currently initializing. This may take a minute since Phi-3.5-mini is loading. Please try again shortly."
             else:
                 # Other error status codes
                 if response.status_code == 403:
@@ -107,14 +110,14 @@ def query_huggingface_model(prompt, max_retries=2):
                     print(f"Response details: {response.text}")
                     return "Access denied (HTTP 403). Your API token may not have permission to use this model. Please check your Hugging Face account permissions."
 
-                return f"Sorry, I encountered an error (Status code: {response.status_code}). Please try again later."
+                return f"Sorry, I encountered an error (Status code: {response.status_code}). Response: {response.text[:100]}... Please try again later."
             
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
                 time.sleep(10)
                 continue
             else:
-                return "The request timed out. Phi-4 is a large model and may take longer to respond. Please try again in a moment."
+                return "The request timed out. Phi-3.5-mini is a large model and may take longer to respond. Please try again in a moment."
         except Exception as e:
             return f"An error occurred: {str(e)}. Please try again later."
     
