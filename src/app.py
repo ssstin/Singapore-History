@@ -73,7 +73,7 @@ def query_huggingface_model(prompt):
 
 # Setup sidebar
 with st.sidebar:
-    st.title("Singapore History CHatbot")
+    st.title("Singapore History Chatbot")
     
     # Model info
     st.subheader("About")
