@@ -25,27 +25,20 @@ try:
 except Exception as e:
     st.write(f"CSS file not found. Default styling will be used. Error: {e}")
 
-# Function to query the Hugging Face model
 def query_huggingface_model(prompt):
-    # Get API key from Streamlit secrets (set in Streamlit Cloud)
     api_token = st.secrets["HF_API_TOKEN"]
     
-    API_URL = "https://api-inference.huggingface.co/models/unsloth/Phi-3.5-mini-instruct"
+    # Change to this more reliable model
+    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-2"
+    
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    # Format the prompt for the model
-    prompt_with_context = (
-        f"You are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history. "
-        f"<|user|>\n{prompt}\n<|assistant|>"
-    )
-    
-    # Prepare the payload
+    # Phi-2 uses a different prompt format - simpler
     payload = {
-        "inputs": prompt_with_context,
+        "inputs": f"You are a helpful assistant specializing in Singapore history. Question: {prompt}\nAnswer:",
         "parameters": {
             "max_new_tokens": 512,
             "temperature": 0.7,
