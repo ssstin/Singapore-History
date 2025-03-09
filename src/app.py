@@ -20,25 +20,32 @@ def load_css(css_file):
 
 # Load CSS File
 try:
-    css = load_css("src/styles/main.css")
+    css = load_css("styles/main.css")
     st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 except Exception as e:
     st.write(f"CSS file not found. Default styling will be used. Error: {e}")
 
+# Function to query the Hugging Face model
 def query_huggingface_model(prompt):
+    # Get API key from Streamlit secrets (set in Streamlit Cloud)
     api_token = st.secrets["HF_API_TOKEN"]
     
-    # Change to this more reliable model
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-2"
-    
+    API_URL = "https://api-inference.huggingface.co/models/unsloth/Phi-3.5-mini-instruct"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    # Phi-2 uses a different prompt format - simpler
+    # Format the prompt for the model
+    prompt_with_context = (
+        f"You are a helpful assistant specialized in Singapore history. "
+        f"Keep your answers factual, informative and focused on Singapore's history. "
+        f"<|user|>\n{prompt}\n<|assistant|>"
+    )
+    
+    # Prepare the payload
     payload = {
-        "inputs": f"You are a helpful assistant specializing in Singapore history. Question: {prompt}\nAnswer:",
+        "inputs": prompt_with_context,
         "parameters": {
             "max_new_tokens": 512,
             "temperature": 0.7,
@@ -187,5 +194,6 @@ with col2:
 # Footer with information
 st.markdown("""
 <div style="text-align: center; margin-top: 20px; margin-bottom: 20px; font-size: 12px; color: #888;">
-    This is a demonstration project.
+    This is a demonstration project. 
+</div>
 """, unsafe_allow_html=True)
