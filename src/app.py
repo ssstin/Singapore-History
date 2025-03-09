@@ -31,17 +31,16 @@ def query_huggingface_model(prompt, max_retries=2):
     api_token = st.secrets["HF_API_TOKEN"]
     
     # Using Microsoft's Phi-4 model
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-4"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
-    
-    # Format the prompt for Phi-4
+    API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
+
+    # Or OpenAI's TinyLlama:
+    # API_URL = "https://api-inference.huggingface.co/models/TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+
+    # Adjust the prompt formatting for the alternative model
     prompt_with_context = (
-        f"<|system|>\nYou are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history.\n"
-        f"<|user|>\n{prompt}\n<|assistant|>"
+        f"<s>[INST] You are a helpful assistant specialized in Singapore history. "
+        f"Keep your answers factual, informative and focused on Singapore's history.\n\n"
+        f"{prompt} [/INST]"
     )
     
     # Prepare the payload
