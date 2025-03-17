@@ -4,6 +4,10 @@ from datetime import datetime
 import requests
 import json
 import os
+import chromadb
+from huggingface_hub import hf_hub_download, login
+import tempfile
+import shutil
 
 # Page configuration
 st.set_page_config(
@@ -25,22 +29,78 @@ try:
 except Exception as e:
     st.write(f"CSS file not found. Default styling will be used. Error: {e}")
 
+# Function to set up the vector store
+@st.cache_resource
+def setup_vector_store():
+    # Get API token
+    api_token = st.secrets["HF_API_TOKEN"]
+    
+    # Login to Hugging Face
+    login(token=api_token)
+    
+    # Create a temporary directory
+    temp_dir = tempfile.mkdtemp()
+    
+    try:
+        # Download the vector store folder from Hugging Face
+        vector_store_dir = os.path.join(temp_dir, "vector_store")
+        os.makedirs(vector_store_dir, exist_ok=True)
+        
+        # Download the SQLite database file
+        db_path = hf_hub_download(
+            repo_id="ssstin/unsloth",
+            filename="vector_store/chroma.sqlite3",
+            repo_type="model",
+            local_dir=vector_store_dir
+        )
+        
+        # Download other necessary vector store files
+        for filename in ["header.bin", "data_level0.bin", "length.bin", "link_lists.bin", "index_metadata.pickle"]:
+            try:
+                file_path = hf_hub_download(
+                    repo_id="ssstin/unsloth",
+                    filename=f"vector_store/e3b5bd58-d969-4f41-a6b7-cf2da0a9283c/{filename}",
+                    repo_type="model",
+                    local_dir=os.path.join(vector_store_dir, "e3b5bd58-d969-4f41-a6b7-cf2da0a9283c")
+                )
+            except Exception as e:
+                print(f"Could not download {filename}: {e}")
+        
+        # Initialize Chroma client
+        chroma_client = chromadb.PersistentClient(path=vector_store_dir)
+        
+        # Get the collection
+        try:
+            # Try to get the existing collection
+            collection_name = "singapore_history"  # Adjust this to your actual collection name
+            collection = chroma_client.get_collection(collection_name)
+            return collection
+        except Exception as e:
+            st.error(f"Error getting collection: {e}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error setting up vector store: {e}")
+        return None
+
+# Function to query your custom model
 def query_huggingface_model(prompt, max_retries=2):
     # Get API key from Streamlit secrets
     api_token = st.secrets["HF_API_TOKEN"]
     
-    # Using Microsoft's Phi-3.5-mini-instruct model
-    API_URL = "https://api-inference.huggingface.co/models/microsoft/phi-3.5-mini-instruct"
+    # Your custom model URL
+    API_URL = "https://api-inference.huggingface.co/models/ssstin/unsloth"
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json"
     }
     
-    # Format the prompt for Phi-3.5-mini
+    # Format the prompt for your specific model
     prompt_with_context = (
-        f"<|system|>\nYou are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history.\n"
-        f"<|user|>\n{prompt}\n<|assistant|>"
+        f"You are a helpful assistant specialized in Singapore history. "
+        f"Keep your answers factual, informative and focused on Singapore's history.\n\n"
+        f"Question: {prompt}\n\n"
+        f"Answer:"
     )
     
     # Prepare the payload
@@ -50,7 +110,12 @@ def query_huggingface_model(prompt, max_retries=2):
             "max_new_tokens": 512,
             "temperature": 0.7,
             "top_p": 0.9,
-            "do_sample": True
+            "do_sample": True,
+            "return_full_text": False
+        },
+        "options": {
+            "use_cache": True,
+            "wait_for_model": True
         }
     }
     
@@ -72,22 +137,16 @@ def query_huggingface_model(prompt, max_retries=2):
                     
                     # Handle different response formats
                     if isinstance(response_json, list) and len(response_json) > 0:
-                        # Format for older models
+                        # Format for text generation models
                         generated_text = response_json[0].get("generated_text", "")
                     elif isinstance(response_json, dict):
-                        # Format for some newer models
+                        # Format for some models
                         generated_text = response_json.get("generated_text", "")
                     else:
                         # Fallback
                         generated_text = str(response_json)
                     
-                    # Extract only the assistant's response
-                    if "<|assistant|>" in generated_text:
-                        assistant_response = generated_text.split("<|assistant|>")[1].strip()
-                        return assistant_response
-                    else:
-                        # If format not found, return everything after the prompt
-                        return generated_text.replace(prompt_with_context, "").strip()
+                    return generated_text.strip()
                         
                 except Exception as e:
                     # Log the error and response for debugging
@@ -98,31 +157,62 @@ def query_huggingface_model(prompt, max_retries=2):
             # If model is loading, wait and retry
             elif response.status_code == 503:
                 if attempt < max_retries - 1:
-                    # Wait longer between retries for larger models
                     time.sleep(15)
                     continue
                 else:
-                    return "The model is currently initializing. This may take a minute since Phi-3.5-mini is loading. Please try again shortly."
+                    return "The model is currently initializing. Please try again shortly."
             else:
-                # Other error status codes
                 if response.status_code == 403:
                     print(f"API Error: {response.status_code}")
                     print(f"Response details: {response.text}")
-                    return "Access denied (HTTP 403). Your API token may not have permission to use this model. Please check your Hugging Face account permissions."
+                    return "Access denied (HTTP 403). Your API token may not have permission to use this model."
 
-                return f"Sorry, I encountered an error (Status code: {response.status_code}). Response: {response.text[:100]}... Please try again later."
+                return f"Sorry, I encountered an error (Status code: {response.status_code}). Please try again later."
             
         except requests.exceptions.Timeout:
             if attempt < max_retries - 1:
                 time.sleep(10)
                 continue
             else:
-                return "The request timed out. Phi-3.5-mini is a large model and may take longer to respond. Please try again in a moment."
+                return "The request timed out. Please try again in a moment."
         except Exception as e:
             return f"An error occurred: {str(e)}. Please try again later."
     
     # If we've exhausted all retries
     return "Unable to get a response after multiple attempts. Please try again later."
+
+# Function to perform RAG
+def query_with_rag(prompt, collection, max_retries=2):
+    try:
+        # Query the vector store
+        results = collection.query(
+            query_texts=[prompt],
+            n_results=3
+        )
+        
+        # Extract context from results
+        if results and "documents" in results and len(results["documents"]) > 0:
+            contexts = results["documents"][0]
+            context_text = "\n".join(contexts)
+            
+            # Create the augmented prompt with context
+            rag_prompt = (
+                f"Context information:\n{context_text}\n\n"
+                f"Based on this context, answer the following question about Singapore history:\n"
+                f"Question: {prompt}\n\n"
+                f"Answer:"
+            )
+            
+            # Query the model with the augmented prompt
+            return query_huggingface_model(rag_prompt, max_retries)
+        else:
+            # Fallback to direct query if no results found
+            return query_huggingface_model(prompt, max_retries)
+    
+    except Exception as e:
+        st.error(f"RAG error: {e}")
+        # Fallback to direct query if RAG fails
+        return query_huggingface_model(prompt, max_retries)
 
 # Setup sidebar
 with st.sidebar:
@@ -130,7 +220,7 @@ with st.sidebar:
     
     # Model info
     st.subheader("About")
-    st.write("This chatbot uses the Phi-3.5-mini-instruct model hosted on Hugging Face to answer questions about Singapore's history.")
+    st.write("This chatbot uses a custom Singapore History model hosted on Hugging Face to answer questions about Singapore's history.")
     
     st.divider()
     
@@ -151,6 +241,11 @@ with st.sidebar:
     st.write("• Major historical events")
     st.write("• Cultural heritage")
     st.write("• Singapore's path to independence")
+
+# Initialize vector store on app start
+if "vector_store" not in st.session_state:
+    with st.spinner("Setting up knowledge base..."):
+        st.session_state.vector_store = setup_vector_store()
 
 # Set up the main content area
 col1, col2, col3 = st.columns([1, 6, 1])
@@ -217,8 +312,12 @@ with col2:
                 # Display typing indicator while waiting for response
                 with st.spinner("Thinking..."):
                     try:
-                        # Query the Hugging Face model
-                        response = query_huggingface_model(user_input)
+                        # Use RAG if vector store is available
+                        if st.session_state.vector_store:
+                            response = query_with_rag(user_input, st.session_state.vector_store)
+                        else:
+                            # Fallback to direct query
+                            response = query_huggingface_model(user_input)
                         
                         # Add AI response to chat history
                         st.session_state.messages.append(
@@ -240,6 +339,6 @@ with col2:
 # Footer with information
 st.markdown("""
 <div style="text-align: center; margin-top: 20px; margin-bottom: 20px; font-size: 12px; color: #888;">
-    This is a demonstration project. 
+    This is a demonstration project using a custom Singapore History model.
 </div>
 """, unsafe_allow_html=True)
