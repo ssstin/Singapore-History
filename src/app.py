@@ -28,8 +28,8 @@ st.set_page_config(
 def load_model():
     base_model = AutoModelForCausalLM.from_pretrained(
         "unsloth/phi-3.5-mini-instruct-bnb-4bit",
-        device_map="auto",
-        load_in_4bit=True
+        device_map="cpu",
+        load_in_4bit=False
     )
     tokenizer = AutoTokenizer.from_pretrained("unsloth/phi-3.5-mini-instruct-bnb-4bit")
     
