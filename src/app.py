@@ -12,6 +12,9 @@ import chromadb
 from huggingface_hub import hf_hub_download, login
 import tempfile
 import shutil
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import PeftModel
+import torch
 
 # Page configuration
 st.set_page_config(
@@ -19,6 +22,55 @@ st.set_page_config(
     page_icon="💬",
     layout="wide"
 )
+
+# Add this function to load the model
+@st.cache_resource
+def load_model():
+    base_model = AutoModelForCausalLM.from_pretrained(
+        "unsloth/phi-3.5-mini-instruct-bnb-4bit",
+        device_map="auto",
+        load_in_4bit=True
+    )
+    tokenizer = AutoTokenizer.from_pretrained("unsloth/phi-3.5-mini-instruct-bnb-4bit")
+    
+    # Download your adapter
+    adapter_path = hf_hub_download(
+        repo_id="ssstin/unsloth",
+        filename="adapter_config.json",
+        repo_type="model"
+    )
+    adapter_dir = os.path.dirname(adapter_path)
+    
+    # Load adapter
+    model = PeftModel.from_pretrained(base_model, adapter_dir)
+    
+    return model, tokenizer
+
+# Function to generate text with local model
+def generate_with_local_model(prompt, max_new_tokens=512, temperature=0.7):
+    # Load model if not already loaded
+    if "model" not in st.session_state:
+        with st.spinner("Loading model..."):
+            st.session_state.model, st.session_state.tokenizer = load_model()
+    
+    model = st.session_state.model
+    tokenizer = st.session_state.tokenizer
+    
+    # Prepare input
+    inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    
+    # Generate response
+    with torch.no_grad():
+        outputs = model.generate(
+            **inputs,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            do_sample=temperature > 0,
+            top_p=0.9
+        )
+    
+    # Decode and return
+    return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 # Load CSS from external file
 def load_css(css_file):
@@ -87,106 +139,8 @@ def setup_vector_store():
         st.error(f"Error setting up vector store: {e}")
         return None
 
-# Function to query your custom model
-def query_huggingface_model(prompt, max_retries=2):
-    # Get API key from Streamlit secrets
-    api_token = st.secrets["HF_API_TOKEN"]
-    
-    # Your custom model URL
-    API_URL = "https://api-inference.huggingface.co/models/ssstin/unsloth"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
-    }
-    
-    # Format the prompt for your specific model
-    prompt_with_context = (
-        f"You are a helpful assistant specialized in Singapore history. "
-        f"Keep your answers factual, informative and focused on Singapore's history.\n\n"
-        f"Question: {prompt}\n\n"
-        f"Answer:"
-    )
-    
-    # Prepare the payload
-    payload = {
-        "inputs": prompt_with_context,
-        "parameters": {
-            "max_new_tokens": 512,
-            "temperature": 0.7,
-            "top_p": 0.9,
-            "do_sample": True,
-            "return_full_text": False
-        },
-        "options": {
-            "use_cache": True,
-            "wait_for_model": True
-        }
-    }
-    
-    # Add retry logic
-    for attempt in range(max_retries):
-        try:
-            # Make the API request
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=60)
-            
-            # Log response for debugging
-            print(f"Status code: {response.status_code}")
-            print(f"Response preview: {response.text[:300]}")
-            
-            # Check if the request was successful
-            if response.status_code == 200:
-                try:
-                    # Process the response
-                    response_json = response.json()
-                    
-                    # Handle different response formats
-                    if isinstance(response_json, list) and len(response_json) > 0:
-                        # Format for text generation models
-                        generated_text = response_json[0].get("generated_text", "")
-                    elif isinstance(response_json, dict):
-                        # Format for some models
-                        generated_text = response_json.get("generated_text", "")
-                    else:
-                        # Fallback
-                        generated_text = str(response_json)
-                    
-                    return generated_text.strip()
-                        
-                except Exception as e:
-                    # Log the error and response for debugging
-                    print(f"Error parsing response: {e}")
-                    print(f"Response content: {response.text[:300]}...")
-                    return f"I encountered an error processing the response. Please try again."
-            
-            # If model is loading, wait and retry
-            elif response.status_code == 503:
-                if attempt < max_retries - 1:
-                    time.sleep(15)
-                    continue
-                else:
-                    return "The model is currently initializing. Please try again shortly."
-            else:
-                if response.status_code == 403:
-                    print(f"API Error: {response.status_code}")
-                    print(f"Response details: {response.text}")
-                    return "Access denied (HTTP 403). Your API token may not have permission to use this model."
-
-                return f"Sorry, I encountered an error (Status code: {response.status_code}). Please try again later."
-            
-        except requests.exceptions.Timeout:
-            if attempt < max_retries - 1:
-                time.sleep(10)
-                continue
-            else:
-                return "The request timed out. Please try again in a moment."
-        except Exception as e:
-            return f"An error occurred: {str(e)}. Please try again later."
-    
-    # If we've exhausted all retries
-    return "Unable to get a response after multiple attempts. Please try again later."
-
-# Function to perform RAG
-def query_with_rag(prompt, collection, max_retries=2):
+# Modified RAG function to use local model
+def query_with_rag(prompt, collection):
     try:
         # Query the vector store
         results = collection.query(
@@ -207,16 +161,16 @@ def query_with_rag(prompt, collection, max_retries=2):
                 f"Answer:"
             )
             
-            # Query the model with the augmented prompt
-            return query_huggingface_model(rag_prompt, max_retries)
+            # Use local model
+            return generate_with_local_model(rag_prompt)
         else:
             # Fallback to direct query if no results found
-            return query_huggingface_model(prompt, max_retries)
+            return generate_with_local_model(prompt)
     
     except Exception as e:
         st.error(f"RAG error: {e}")
         # Fallback to direct query if RAG fails
-        return query_huggingface_model(prompt, max_retries)
+        return generate_with_local_model(prompt)
 
 # Setup sidebar
 with st.sidebar:
@@ -224,7 +178,7 @@ with st.sidebar:
     
     # Model info
     st.subheader("About")
-    st.write("This chatbot uses a custom Singapore History model hosted on Hugging Face to answer questions about Singapore's history.")
+    st.write("This chatbot uses a custom Singapore History model to answer questions about Singapore's history.")
     
     st.divider()
     
@@ -250,6 +204,15 @@ with st.sidebar:
 if "vector_store" not in st.session_state:
     with st.spinner("Setting up knowledge base..."):
         st.session_state.vector_store = setup_vector_store()
+
+# Initialize model on startup (optional, can be lazy-loaded later)
+if "model" not in st.session_state and "tokenizer" not in st.session_state:
+    try:
+        with st.spinner("Loading model (this may take a moment)..."):
+            st.session_state.model, st.session_state.tokenizer = load_model()
+    except Exception as e:
+        st.error(f"Error loading model: {e}")
+        st.session_state.model_error = True
 
 # Set up the main content area
 col1, col2, col3 = st.columns([1, 6, 1])
@@ -316,12 +279,16 @@ with col2:
                 # Display typing indicator while waiting for response
                 with st.spinner("Thinking..."):
                     try:
-                        # Use RAG if vector store is available
-                        if st.session_state.vector_store:
-                            response = query_with_rag(user_input, st.session_state.vector_store)
+                        # Check if model loaded successfully
+                        if hasattr(st.session_state, 'model_error') and st.session_state.model_error:
+                            response = "I'm sorry, there was an error loading the model. Please try again later."
                         else:
-                            # Fallback to direct query
-                            response = query_huggingface_model(user_input)
+                            # Use RAG if vector store is available
+                            if st.session_state.vector_store:
+                                response = query_with_rag(user_input, st.session_state.vector_store)
+                            else:
+                                # Fallback to direct query without RAG
+                                response = generate_with_local_model(user_input)
                         
                         # Add AI response to chat history
                         st.session_state.messages.append(
