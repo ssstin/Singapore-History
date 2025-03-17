@@ -23,15 +23,21 @@ st.set_page_config(
     layout="wide"
 )
 
-# Add this function to load the model
 @st.cache_resource
 def load_model():
+    # Use a completely different approach to load the model
     base_model = AutoModelForCausalLM.from_pretrained(
-        "unsloth/phi-3.5-mini-instruct-bnb-4bit",
-        device_map="cpu",
-        load_in_4bit=False
+        "unsloth/Phi-3.5-mini-instruct",
+        trust_remote_code=True,
+        torch_dtype=torch.float32, 
+        use_cache=True,
+        device_map=None, 
+        load_in_4bit=False,
+        load_in_8bit=False
     )
-    tokenizer = AutoTokenizer.from_pretrained("unsloth/phi-3.5-mini-instruct-bnb-4bit")
+    base_model = base_model.to("cpu")
+    
+    tokenizer = AutoTokenizer.from_pretrained("unsloth/Phi-3.5-mini-instruct")
     
     # Download your adapter
     adapter_path = hf_hub_download(
