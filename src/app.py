@@ -76,7 +76,7 @@ def setup_vector_store():
         # Get the collection
         try:
             # Try to get the existing collection
-            collection_name = "singapore_history"  # Adjust this to your actual collection name
+            collection_name = "e3b5bd58-d969-4f41-a6b7-b8501f795315"  
             collection = chroma_client.get_collection(collection_name)
             return collection
         except Exception as e:
